@@ -1,0 +1,257 @@
+diff --git a/src/common/backends/imgui/launcher_imgui.cpp b/src/common/backends/imgui/launcher_imgui.cpp
+index 6ca290b..d875a4b 100644
+--- a/src/common/backends/imgui/launcher_imgui.cpp
++++ b/src/common/backends/imgui/launcher_imgui.cpp
+@@ -3698,7 +3698,9 @@ static void draw_aspect_row(LauncherModel* m, const LauncherTheme& th) {
+      * to be inside the width reserved here -- right-anchoring aligns the right
+      * edge of what it is told about, and a tag left out of the sum hangs off
+      * the card. */
+-    float ctrl_w = px(180);
++    const bool custom_aspects = m->aspect_labels && m->num_aspect_labels > 0;
++    const float combo_w = px(custom_aspects ? 180.0f : SETTINGS_CTRL_W);
++    float ctrl_w = combo_w;
+     if (m->aspect_experimental)
+         ctrl_w += px(8) + ImGui::CalcTextSize("EXPERIMENTAL").x;
+     row_label_right(m->aspect_setting_label && m->aspect_setting_label[0]
+@@ -3706,8 +3708,22 @@ static void draw_aspect_row(LauncherModel* m, const LauncherTheme& th) {
+                         : "Aspect ratio",
+                     th, ctrl_w);
+     ImGui::PushID("aspect_ratio");
+-    if (ImGui::Button(launcher_model_aspect_label(m), ImVec2(px(180), px(30))))
+-        launcher_model_cycle_aspect(m);
++    // A drop-down of the offered ratios (was a button that cycled through them).
++    ImGui::SetNextItemWidth(combo_w);
++    static const char* kBuiltin[3] = { "4:3", "16:9", "21:9" };
++    const bool custom = custom_aspects;
++    const int aspect_now = m->s.aspect_index < 0 ? 0 : m->s.aspect_index > 2 ? 2 : m->s.aspect_index;
++    if (ImGui::BeginCombo("##aspect", custom ? launcher_model_aspect_label(m)
++                                             : kBuiltin[aspect_now])) {
++        const int count = custom ? m->num_aspect_labels : 3;
++        for (int i = 0; i < count; ++i) {
++            if (!custom && !launcher_model_aspect_offered(m, i)) continue;
++            if (ImGui::Selectable(custom ? m->aspect_labels[i] : kBuiltin[i],
++                                  m->s.aspect_index == i))
++                m->s.aspect_index = i;
++        }
++        ImGui::EndCombo();
++    }
+     if (m->aspect_experimental) {
+         ImGui::SameLine(0, px(8));
+         ImGui::AlignTextToFramePadding();
+@@ -3890,6 +3906,63 @@ void draw_quality_preset_row(LauncherModel* m, const LauncherTheme& th) {
+     }
+ }
+ 
++// Render thread / Present thread / Smooth motion rows for the deep (PSX-style)
++// Display card. The legacy card below draws the same three inline; without
++// this the deep card had no way to reach them, so a PSX title's frame
++// generation could only be switched by editing settings.toml.
++static void draw_render_pipeline_rows(LauncherModel* m, const LauncherTheme& th) {
++    if (!launcher_model_render_pipeline_offered(m)) return;
++    row_label_right("Render thread", th, px(SETTINGS_CTRL_W));
++    bool rt = m->s.render_thread != 0;
++    if (ImGui::Checkbox("##render_thread_deep", &rt))
++        m->s.render_thread = rt ? 1 : 0;
++    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
++        ImGui::SetTooltip("Draws on a separate thread so the game keeps running while a frame renders.\n"
++                          "Turn off if you see stutter or glitches. Applies at next launch.");
++    const bool kids = launcher_model_render_pipeline_children_enabled(m);
++    ImGui::BeginDisabled(!kids);
++    row_label_right("Present thread", th, px(SETTINGS_CTRL_W));
++    bool pt = m->s.present_thread != 0;
++    if (ImGui::Checkbox("##present_thread_deep", &pt))
++        m->s.present_thread = pt ? 1 : 0;
++    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
++        ImGui::SetTooltip("Shows finished frames from another thread so waiting for the display never stalls drawing.\n"
++                          "Needs Render thread. Applies at next launch.");
++    // TwistedMetal1234Recomp: frame generation only holds up on Twisted Metal 4.
++    row_label_right("Smooth Motion (Twisted Metal 4 only)", th, px(SETTINGS_CTRL_W));
++    bool fg = m->s.frame_generation != 0;
++    if (ImGui::Checkbox("##frame_generation_deep", &fg))
++        m->s.frame_generation = fg ? 1 : 0;
++    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
++        ImGui::SetTooltip("Adds extra in-between frames up to your display's refresh rate, made from the camera.\n"
++                          "Adds up to one frame of delay. Needs Render thread. Applies at next launch.\n"
++                          "Only use with Twisted Metal 4: the other games reject nearly every in-between frame.");
++    ImGui::EndDisabled();
++}
++
++// TwistedMetal1234Recomp: the frame rate cap of Twisted Metal 1 and 2, which
++// the host turns into those games' frame rate patches at launch.
++static void draw_fps_mode_row(LauncherModel* m, const LauncherTheme& th) {
++    if (!m->has_fps_mode) return;
++    static const char* kModes[3] = { "Normal", "30", "60" };
++    row_label_right("FPS Mode (Twisted Metal 1 and 2 only)", th, px(SETTINGS_CTRL_W));
++    int mode = m->s.fps_mode;
++    if (mode < 0 || mode > 2) mode = 0;
++    ImGui::PushID("fps_mode");
++    ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
++    if (ImGui::BeginCombo("##fps_mode", kModes[mode])) {
++        for (int i = 0; i < 3; ++i)
++            if (ImGui::Selectable(kModes[i], mode == i))
++                m->s.fps_mode = i;
++        ImGui::EndCombo();
++    }
++    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
++        ImGui::SetTooltip("Normal is the original 20 frames per second.\n"
++                          "30 plays closest to the original; 60 is smoother but handling feels off.\n"
++                          "Applies at next launch.");
++    ImGui::PopID();
++}
++
+ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
+     eyebrow("DISPLAY");
+     draw_quality_preset_row(m, th);
+@@ -4031,8 +4104,45 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
+     const float cb = ImGui::GetFrameHeight();   // a checkbox is square
+     if (m->has_window_size) {
+         row_label_right("Window size", th, px(SETTINGS_CTRL_W));
+-        if (ImGui::Button(ui_text(launcher_model_window_size_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
+-            launcher_model_cycle_window_size(m);
++        // A drop-down of every size that fits the desktop at the chosen aspect
++        // ratio (was a button cycling through four sizes up to 1920 wide).
++        // The largest attached display, in pixels.
++        int desk_w = 0, desk_h = 0;
++#if defined(LNG_SDL3)
++        { int count = 0;
++          SDL_DisplayID* displays = SDL_GetDisplays(&count);
++          for (int i = 0; displays && i < count; ++i) {
++              const SDL_DisplayMode* dm = SDL_GetDesktopDisplayMode(displays[i]);
++              if (!dm) continue;
++              const float density = dm->pixel_density > 0.0f ? dm->pixel_density : 1.0f;
++              const int w = (int)(dm->w * density + 0.5f), h = (int)(dm->h * density + 0.5f);
++              if (w > desk_w) { desk_w = w; desk_h = h; }
++          }
++          SDL_free(displays); }
++#else
++        for (int i = 0; i < SDL_GetNumVideoDisplays(); ++i) {
++            SDL_DisplayMode dm;
++            if (SDL_GetDesktopDisplayMode(i, &dm) == 0 && dm.w > desk_w) { desk_w = dm.w; desk_h = dm.h; }
++        }
++#endif
++        ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
++        if (ImGui::BeginCombo("##window_size", ui_text(launcher_model_window_size_label(m)))) {
++            const int keep = m->s.window_width;
++            for (int i = 0; i < launcher_model_window_width_count(); ++i) {
++                const int w = launcher_model_window_width_at(i);
++                m->s.window_width = w;
++                const int h = launcher_model_window_height(m);
++                // Without a display size, offer the sizes the button used to.
++                const bool fits = desk_w > 0 ? (w <= desk_w && h <= desk_h) : w <= 1920;
++                if (!fits && w != keep && i > 0) continue;
++                char label[32];
++                snprintf(label, sizeof(label), "%d \xC3\x97 %d", w, h);
++                if (ImGui::Selectable(label, w == keep)) { m->s.window_width = w; goto window_size_picked; }
++            }
++            m->s.window_width = keep;
++        window_size_picked:
++            ImGui::EndCombo();
++        }
+     } else {
+         row_window_scale(m, th);
+     }
+@@ -4302,6 +4412,9 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
+         }
+     }
+ 
++    draw_render_pipeline_rows(m, th);
++    draw_fps_mode_row(m, th);
++
+     // Frame interpolation is only meaningful under OpenGL (Software has no
+     // interpolation pass); Presentation target only matters once frame
+     // interpolation is actually on.
+diff --git a/src/common/launcher_model.c b/src/common/launcher_model.c
+index 0e22e75..f2a086f 100644
+--- a/src/common/launcher_model.c
++++ b/src/common/launcher_model.c
+@@ -32,7 +32,10 @@
+ static const int kFreqTable[] = { 32040, 32000, 44100, 48000 };
+ static const int kFreqCount   = (int)(sizeof(kFreqTable) / sizeof(kFreqTable[0]));
+ 
+-static const int kWindowWidths[]    = { 960, 1280, 1600, 1920 };
++/* TwistedMetal1234Recomp: sizes up to 8K; the Display card lists the ones
++ * that fit the desktop at the chosen aspect ratio. */
++static const int kWindowWidths[]    = { 960, 1280, 1600, 1920, 2560, 3200, 3440,
++                                        3840, 5120, 7680 };
+ static const int kWindowWidthCount  = (int)(sizeof(kWindowWidths) / sizeof(kWindowWidths[0]));
+ static const int kInterpFpsTable[]  = { 0, 90, 120, 144, 165, 240 };
+ static const int kInterpFpsCount    = (int)(sizeof(kInterpFpsTable) / sizeof(kInterpFpsTable[0]));
+@@ -554,6 +557,7 @@ void launcher_model_init(LauncherModel* m,
+         m->internal_resolution_note   = game->internal_resolution_note;
+         m->has_dynamic_resolution      = game->has_dynamic_resolution != 0;
+         m->has_render_pipeline         = game->has_render_pipeline != 0;
++        m->has_fps_mode                = game->has_fps_mode != 0;
+         m->quality_offered_mask        = game->quality_offered_mask;
+         m->quality_detected            = game->quality_detected;
+         m->quality_summary             = game->quality_summary;
+@@ -1751,11 +1755,20 @@ void launcher_model_cycle_window_size(LauncherModel* m) {
+     m->s.window_width = kWindowWidths[(idx + 1) % kWindowWidthCount];
+ }
+ 
++int launcher_model_window_width_count(void) { return kWindowWidthCount; }
++int launcher_model_window_width_at(int i) {
++    return kWindowWidths[clampi(i, 0, kWindowWidthCount - 1)];
++}
++int launcher_model_window_height(const LauncherModel* m) {
++    int w = m->s.window_width > 0 ? m->s.window_width : kWindowWidths[0];
++    int aspect = clampi(m->s.aspect_index, 0, 2);
++    return (aspect == 1) ? (w * 9 / 16) : (aspect == 2) ? (w * 9 / 21) : (w * 3 / 4);
++}
++
+ const char* launcher_model_window_size_label(const LauncherModel* m) {
+     static char buf[32];
+     int w = m->s.window_width > 0 ? m->s.window_width : kWindowWidths[0];
+-    int aspect = clampi(m->s.aspect_index, 0, 2);
+-    int h = (aspect == 1) ? (w * 9 / 16) : (aspect == 2) ? (w * 9 / 21) : (w * 3 / 4);
++    int h = launcher_model_window_height(m);
+     snprintf(buf, sizeof(buf), "%d \xC3\x97 %d", w, h);   // "×" (U+00D7)
+     return buf;
+ }
+diff --git a/src/common/launcher_model.h b/src/common/launcher_model.h
+index 1e7fc30..c04f2a4 100644
+--- a/src/common/launcher_model.h
++++ b/src/common/launcher_model.h
+@@ -339,6 +339,7 @@ typedef struct {
+     const char*        internal_resolution_note;
+     bool               has_dynamic_resolution;
+     bool               has_render_pipeline;   // GameInfo.has_render_pipeline
++    bool               has_fps_mode;          // GameInfo.has_fps_mode
+     // ---- graphics presets (GameInfo.quality_*; Settings.quality_preset) ----
+     int                quality_offered_mask;
+     int                quality_detected;
+@@ -868,6 +869,11 @@ void launcher_model_volume_delta(LauncherModel* m, int delta);  // clamp 0..100
+ // flag so the control isn't shown at all, per the legacy PSX launcher parity). ----
+ void launcher_model_cycle_window_size(LauncherModel* m);       // {960,1280,1600,1920} wrap
+ const char* launcher_model_window_size_label(const LauncherModel* m);  // "1280 x 960" (H follows aspect)
++/* The window widths the Display card may offer, and the height one gets at the
++ * current aspect ratio. */
++int launcher_model_window_width_count(void);
++int launcher_model_window_width_at(int i);
++int launcher_model_window_height(const LauncherModel* m);
+ void launcher_model_toggle_renderer(LauncherModel* m);         // Software/OpenGL
+ const char* launcher_model_renderer_label(const LauncherModel* m);
+ /* List form of the same vocabulary, for hosts that draw a dropdown instead of
+diff --git a/src/recomp_launcher.h b/src/recomp_launcher.h
+index efb6321..82563d0 100644
+--- a/src/recomp_launcher.h
++++ b/src/recomp_launcher.h
+@@ -1561,6 +1561,10 @@ struct RecompLauncherCSettings {
+     int  render_thread;
+     int  present_thread;
+     int  frame_generation;
++    /* TwistedMetal1234Recomp (GameInfo.has_fps_mode): the game's own frame
++     * rate cap. 0 = Normal (the original 20), 1 = 30, 2 = 60. Applied at next
++     * launch; a zero-initialized host reads as Normal. */
++    int  fps_mode;
+     /* Graphics preset (GameInfo.quality_offered_mask): 0 = unset, 1 Low,
+      * 2 Medium, 3 High, 4 Ultra, 5 Custom (the player changed a setting a
+      * preset governs; quality_base is the preset it started from, 1..4).
+@@ -2304,6 +2308,8 @@ typedef struct RecompLauncherCGameInfo {
+      * frame_generation (Display rows, OpenGL only); shown as "Smooth motion". Appended for ABI
+      * stability. */
+     int                has_render_pipeline;
++    /* Nonzero: the host offers Settings.fps_mode (Display row). */
++    int                has_fps_mode;
+     /* Entering the netplay flow / returning to the offline dashboard.
+      * Optional title policy (e.g. stage required co-op mods). The callback
+      * remains active through controller/settings subviews and a match launch.

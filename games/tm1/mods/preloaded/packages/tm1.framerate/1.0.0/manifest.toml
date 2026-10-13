@@ -1,0 +1,87 @@
+format_version = 7
+id = "tm1.framerate"
+version = "1.0.0"
+name = "Twisted Metal Frame Rate"
+author = "TwistedMetal1234Recomp"
+description = "Raises the game's own frame-rate cap from 20 to 30 or 60 frames per second."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SCUS-94304"
+
+[[feature]]
+id = "fps_mode"
+name = "Higher frame rate"
+description = "The game loop limits itself to 20 FPS and steps its simulation by the measured frame time. This raises the limit; game.toml speeds up the emulated CPU while the raised limit is in effect so a frame fits in one refresh."
+group = "Visual"
+default_enabled = false
+# Chosen with the launcher's Settings -> Display -> FPS Mode, not the Mods list.
+hidden = true
+
+[[option]]
+feature = "fps_mode"
+id = "rate"
+label = "Frame rate"
+type = "choice"
+default = "30"
+
+[[option.choice]]
+value = "60"
+label = "60 FPS"
+
+[[option.choice]]
+value = "30"
+label = "30 FPS"
+
+# The main loop waits on VSync while the measured rate is above the cap it
+# loads from 0x8018E82C (`lw $v1, -6100($v1)` at 0x800FFA58). Replace that load
+# with the wanted cap, so the loop runs at it regardless of what level setup
+# stored there.
+[[patch]]
+feature = "fps_mode"
+target = "main_exe"
+address = 0x800FFA58
+expected = "2c e8 63 8c"
+replace = "3c 00 03 34"
+when = { rate = "60" }
+
+[[patch]]
+feature = "fps_mode"
+target = "main_exe"
+address = 0x800FFA58
+expected = "2c e8 63 8c"
+replace = "1e 00 03 34"
+when = { rate = "30" }
+
+# libetc VSync(0) waits for the next VBlank in a busy loop bounded by an
+# iteration count (`ori $a1, $zr, 1`, shifted left 15 by the wait helper). With
+# the emulated CPU charged a quarter of its cost the loop spins four times as
+# fast, the bound expires before the VBlank arrives, and the game loop drifts
+# out of phase with the display until a buffer is cleared just before it is
+# shown (a blank frame). Raising the bound eightfold keeps the wait real.
+[[patch]]
+feature = "fps_mode"
+target = "main_exe"
+address = 0x8015F0A4
+expected = "01 00 05 34"
+replace = "08 00 05 34"
+
+# The loop's rate helper rounds the time since the last frame to whole
+# refreshes and returns rate / refreshes. For zero refreshes it divided by
+# zero and returned 1 ("slower than one frame a second"), which ends the VSync
+# wait at once. After a frame that overran, the next one would therefore
+# finish a few percent of a refresh later and be credited a full time step, so
+# the game clock ran fast at 30 and 60. Return a very high rate for zero
+# refreshes instead, so the loop keeps waiting for the VBlank.
+[[patch]]
+feature = "fps_mode"
+target = "main_exe"
+address = 0x8010A860
+expected = "1b 00 62 00 02 00 40 14 00 00 00 00 0d 00 07 00 12 18 00 00 00 00 00 00 02 00 60 1c 00 00 00 00 01 00 03 34"
+replace = "07 00 40 18 00 00 00 00 1b 00 62 00 12 18 00 00 04 00 60 1c 00 00 00 00 21 2a 04 08 01 00 03 34 ff 7f 03 34"
+
+# Code hooks for fixes patches cannot express (mods/src/tm1_framerate.c).
+[[plugin]]
+feature = "fps_mode"
+id = "tm1.framerate"

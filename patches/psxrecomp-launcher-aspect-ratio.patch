@@ -1,0 +1,37 @@
+diff --git a/runtime/src/main.cpp b/runtime/src/main.cpp
+index ab294b0f..5b9b1565 100644
+--- a/runtime/src/main.cpp
++++ b/runtime/src/main.cpp
+@@ -15647,8 +15647,6 @@ namespace {
+         int resume_netplay_room)
+     {
+         if (!gi) return;
+-        (void)ws_offered_b;
+-        (void)ws_ultrawide_offered_b;
+         launcher_profile_apply("psx", gi);
+         gi->name = game_name_c;
+         gi->region = region_c;
+@@ -15671,7 +15669,9 @@ namespace {
+         gi->pad_mode_selectable = ctrl_lock_mode_b ? 0 : 1;
+         gi->locked_pad_mode = locked_pad_mode_i;
+         gi->lock_device = ctrl_lock_device_b ? 1 : 0;
+-        gi->aspect_mask = 0;
++        /* Bit 1 offers 16:9 and bit 2 offers 21:9; 4:3 is always available. */
++        gi->aspect_mask = (ws_offered_b ? 2u : 0u) |
++                          (ws_offered_b && ws_ultrawide_offered_b ? 4u : 0u);
+         gi->renderer_labels = kPsxRendererLabels;
+         gi->num_renderers = vulkan_offered_b ? 3 : 2;
+         gi->settings_bindings = 1;
+@@ -16136,8 +16136,10 @@ int main(int argc, char** argv) {
+      * game.toml offer flags remain parseable for old projects but deliberately
+      * cannot expose generic launcher controls or activate the features. Trusted
+      * activation plugins apply them after launcher/settings resolution. */
+-    constexpr bool ws_offered = false;
+-    constexpr bool ws_ultrawide_offered = false;
++    /* TwistedMetal1234Recomp: widescreen is a launcher Settings choice here
++     * (Aspect ratio: 4:3 / 16:9 / 21:9), not a per-title mod. */
++    constexpr bool ws_offered = true;
++    constexpr bool ws_ultrawide_offered = true;
+     constexpr bool frame_interpolation_offered = false;
+     constexpr bool skip_fmv_offered = false;
+     /* Load acceleration is likewise mod-owned (Fast Loading / CD Speed). The

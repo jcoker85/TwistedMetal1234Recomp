@@ -1,0 +1,6 @@
+* text=auto
+# Patches and shell scripts must keep LF endings to apply and run everywhere.
+*.patch text eol=lf
+*.sh    text eol=lf
+*.png   binary
+*.ico   binary

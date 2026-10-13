@@ -1,0 +1,83 @@
+diff --git a/runtime/src/gpu.c b/runtime/src/gpu.c
+index 1fd8313d..39ef51d3 100644
+--- a/runtime/src/gpu.c
++++ b/runtime/src/gpu.c
+@@ -3293,6 +3293,61 @@ static int ws_nw_left_hud_packet(void) {
+         matched = a >= ws_nw_left_hud_packet2_lo && a < ws_nw_left_hud_packet2_hi;
+     return matched;
+ }
++/* TwistedMetal1234Recomp: HUD primitives that form one row move together.
++ *
++ * The thirds rule below judges each primitive alone, so a centred banner
++ * ("VICTORIOUS") whose letters span the third boundaries is pulled apart: the
++ * outer letters go to the corners and the middle ones stay. Remember which
++ * columns each 8-line band of the HUD used on the previous drawn frame, and
++ * judge a primitive by the whole run of touching columns it belongs to:
++ * a run hugging one edge moves to that corner intact, anything else is
++ * placed by the run's centre. */
++#define WS_HUD_ROWS 32
++#define WS_HUD_COLS 64
++#define WS_HUD_RUN_GAP 4          /* columns of space allowed inside a run (20 px at 320) */
++static uint64_t ws_hud_rows_prev[WS_HUD_ROWS], ws_hud_rows_cur[WS_HUD_ROWS];
++static uint32_t ws_hud_rows_frame;
++static int ws_hud_rows_cur_used;
++
++static int ws_hud_col(int32_t x, int32_t X, int32_t W) {
++    int32_t c = W > 0 ? (x - X) * WS_HUD_COLS / W : 0;
++    return c < 0 ? 0 : c >= WS_HUD_COLS ? WS_HUD_COLS - 1 : (int)c;
++}
++
++/* 1 when the primitive belongs to a remembered run; then *lo..*hi are the
++ * run's first and last column. Also records the primitive for next frame. */
++static int ws_hud_run(int32_t x, int32_t w, int32_t X, int32_t W, int* lo, int* hi) {
++    const uint32_t frame = (uint32_t)s_frame_count;
++    if (frame != ws_hud_rows_frame) {
++        ws_hud_rows_frame = frame;
++        if (ws_hud_rows_cur_used) {     /* a frame with no HUD keeps the last picture */
++            memcpy(ws_hud_rows_prev, ws_hud_rows_cur, sizeof ws_hud_rows_prev);
++            memset(ws_hud_rows_cur, 0, sizeof ws_hud_rows_cur);
++            ws_hud_rows_cur_used = 0;
++        }
++    }
++    const int row = (int)((gp0_cmd_buf[1] >> 19) & (WS_HUD_ROWS - 1));   /* first vertex y / 8 */
++    int c0 = ws_hud_col(x, X, W), c1 = ws_hud_col(x + (w > 0 ? w - 1 : 0), X, W);
++    for (int c = c0; c <= c1; c++) ws_hud_rows_cur[row] |= 1ull << c;
++    ws_hud_rows_cur_used = 1;
++    const uint64_t cells = ws_hud_rows_prev[row];
++    if (!cells) return 0;
++    int gap = 0;
++    while (c0 > 0 && gap <= WS_HUD_RUN_GAP) {
++        if (cells >> (c0 - 1 - gap) & 1) { c0 -= 1 + gap; gap = 0; }
++        else if (c0 - 1 - gap == 0) break;
++        else gap++;
++    }
++    gap = 0;
++    while (c1 < WS_HUD_COLS - 1 && gap <= WS_HUD_RUN_GAP) {
++        if (cells >> (c1 + 1 + gap) & 1) { c1 += 1 + gap; gap = 0; }
++        else if (c1 + 1 + gap == WS_HUD_COLS - 1) break;
++        else gap++;
++    }
++    *lo = c0; *hi = c1;
++    return 1;
++}
++
+ static int32_t ws_nw_hud_shift(int32_t x, int32_t w) {
+     if (!ws_native_wide_active()) return 0;
+     if (g_bg2d_host_size && ws_tagged_world_primitive()) return 0;
+@@ -3314,6 +3369,16 @@ static int32_t ws_nw_hud_shift(int32_t x, int32_t w) {
+     if (ws_anchor_addr && !ws_nw_hud_tag_rects && psx_ws_prim_is_tagged()) return 0;
+     int32_t X  = ws_disp_x();
+     int32_t W  = ws_disp_w();
++    int run_lo = 0, run_hi = 0;
++    if (ws_nw_left_hud_packet() && ws_hud_run(x, w, X, W, &run_lo, &run_hi)) {
++        const int left_margin = run_lo, right_margin = WS_HUD_COLS - 1 - run_hi;
++        if (left_margin < WS_HUD_COLS / 10 && right_margin >= WS_HUD_COLS / 4) return -off;
++        if (right_margin < WS_HUD_COLS / 10 && left_margin >= WS_HUD_COLS / 4) return off;
++        const int centre2 = run_lo + run_hi + 1;                /* 2 * centre column */
++        if (3 * centre2 < 2 * WS_HUD_COLS) return -off;
++        if (3 * centre2 > 4 * WS_HUD_COLS) return off;
++        return 0;
++    }
+     int32_t cx = 2 * (x - X) + w;      /* 2*centre, avoids losing the half */
+     if (3 * cx < 2 * W) return -off;   /* left third  -> pull to left edge  */
+     if (3 * cx > 4 * W) return  off;   /* right third -> push to right edge */

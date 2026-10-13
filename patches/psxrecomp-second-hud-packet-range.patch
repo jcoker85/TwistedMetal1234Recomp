@@ -1,0 +1,118 @@
+diff --git a/recompiler/src/config_loader.cpp b/recompiler/src/config_loader.cpp
+index 3024b8ea..d4ea8961 100644
+--- a/recompiler/src/config_loader.cpp
++++ b/recompiler/src/config_loader.cpp
+@@ -1856,6 +1856,8 @@ GameConfig load_game_config(const fs::path& config_path_in) {
+     bool ws_nw_hud_corners = false;
+     uint32_t ws_nw_left_hud_packet_lo = 0;
+     uint32_t ws_nw_left_hud_packet_hi = 0;
++    uint32_t ws_nw_left_hud_packet2_lo = 0;
++    uint32_t ws_nw_left_hud_packet2_hi = 0;
+     bool ws_nw_backdrop = false;
+     bool ws_clear_reveal = false;
+     bool ws_nw_flat_backdrop = false;
+@@ -2069,6 +2071,24 @@ GameConfig load_game_config(const fs::path& config_path_in) {
+                     "{}: [widescreen] nw_left_hud_packet range is empty or reversed",
+                     config_path.string()));
+         }
++        if (ws.contains("nw_left_hud_packet2_lo") !=
++            ws.contains("nw_left_hud_packet2_hi"))
++            throw std::runtime_error(fmt::format(
++                "{}: [widescreen] nw_left_hud_packet2_lo and "
++                "nw_left_hud_packet2_hi must be set together",
++                config_path.string()));
++        if (ws.contains("nw_left_hud_packet2_lo")) {
++            ws_nw_left_hud_packet2_lo = parse_hex(
++                toml::find<std::string>(ws, "nw_left_hud_packet2_lo"),
++                "widescreen.nw_left_hud_packet2_lo");
++            ws_nw_left_hud_packet2_hi = parse_hex(
++                toml::find<std::string>(ws, "nw_left_hud_packet2_hi"),
++                "widescreen.nw_left_hud_packet2_hi");
++            if (ws_nw_left_hud_packet2_lo >= ws_nw_left_hud_packet2_hi)
++                throw std::runtime_error(fmt::format(
++                    "{}: [widescreen] nw_left_hud_packet2 range is empty or reversed",
++                    config_path.string()));
++        }
+         if (ws.contains("nw_backdrop"))
+             ws_nw_backdrop = toml::find<bool>(ws, "nw_backdrop");
+         if (ws.contains("clear_reveal"))
+@@ -2716,6 +2736,8 @@ GameConfig load_game_config(const fs::path& config_path_in) {
+         /*ws_nw_hud_corners*/     ws_nw_hud_corners,
+         /*ws_nw_left_hud_packet_lo*/ ws_nw_left_hud_packet_lo,
+         /*ws_nw_left_hud_packet_hi*/ ws_nw_left_hud_packet_hi,
++        /*ws_nw_left_hud_packet2_lo*/ ws_nw_left_hud_packet2_lo,
++        /*ws_nw_left_hud_packet2_hi*/ ws_nw_left_hud_packet2_hi,
+         /*ws_nw_backdrop*/        ws_nw_backdrop,
+         /*ws_clear_reveal*/       ws_clear_reveal,
+         /*ws_nw_flat_backdrop*/   ws_nw_flat_backdrop,
+diff --git a/recompiler/src/config_loader.h b/recompiler/src/config_loader.h
+index 1cefbd03..ccd993a6 100644
+--- a/recompiler/src/config_loader.h
++++ b/recompiler/src/config_loader.h
+@@ -1316,6 +1316,9 @@ struct GameConfig {
+     // Both values must be present together. Runtime-only; no regen required.
+     uint32_t ws_nw_left_hud_packet_lo = 0;
+     uint32_t ws_nw_left_hud_packet_hi = 0;
++    // Second HUD packet range, for titles that double-buffer their HUD packets.
++    uint32_t ws_nw_left_hud_packet2_lo = 0;
++    uint32_t ws_nw_left_hud_packet2_hi = 0;
+ 
+     // [widescreen] nw_backdrop — in native-wide, stretch a screen-space quad
+     // that covers the whole 4:3 framebuffer (sky gradient / backdrop image) to
+diff --git a/runtime/include/gpu.h b/runtime/include/gpu.h
+index b2821fcd..de90dcff 100644
+--- a/runtime/include/gpu.h
++++ b/runtime/include/gpu.h
+@@ -535,6 +535,7 @@ void gpu_ws_set_native_scene_predicate(int (*predicate)(void));
+ /* Targeted alternative for sprite-heavy 2D games: corner-anchor only primitives
+  * whose ordering-table packet lives in the configured half-open RAM range. */
+ void gpu_ws_set_nw_left_hud_packet_range(uint32_t lo, uint32_t hi);
++void gpu_ws_set_nw_left_hud_packet_range2(uint32_t lo, uint32_t hi);
+ void gpu_ws_begin_linked_list(void);
+ void gpu_ws_end_linked_list(void);
+ void gpu_ws_prepass_linked_list(uint32_t start_addr);
+diff --git a/runtime/src/gpu.c b/runtime/src/gpu.c
+index 8101a9e8..1fd8313d 100644
+--- a/runtime/src/gpu.c
++++ b/runtime/src/gpu.c
+@@ -3247,6 +3247,8 @@ static int ws_nw_hud_corners = 0;
+ static int ws_nw_hud_tag_rects = 0;   /* rects shift even when tagged (A/B) */
+ static uint32_t ws_nw_left_hud_packet_lo = 0;
+ static uint32_t ws_nw_left_hud_packet_hi = 0;
++static uint32_t ws_nw_left_hud_packet2_lo = 0;   /* second range: double-buffered HUD */
++static uint32_t ws_nw_left_hud_packet2_hi = 0;
+ /* Explicit title-owned roles. Separate from sprite tags: world sprites and
+  * HUD can share the same builder, and either entry hook may run first. Clear
+  * tags for recycled non-HUD packets; frame expiry protects unused addresses. */
+@@ -3277,12 +3279,18 @@ void gpu_ws_set_nw_left_hud_packet_range(uint32_t lo, uint32_t hi) {
+     ws_nw_left_hud_packet_lo = lo & 0x1FFFFFFFu;
+     ws_nw_left_hud_packet_hi = hi & 0x1FFFFFFFu;
+ }
++void gpu_ws_set_nw_left_hud_packet_range2(uint32_t lo, uint32_t hi) {
++    ws_nw_left_hud_packet2_lo = lo & 0x1FFFFFFFu;
++    ws_nw_left_hud_packet2_hi = hi & 0x1FFFFFFFu;
++}
+ static int ws_nw_left_hud_packet(void) {
+     if (!ws_native_wide_active() || gp0_cmd_source_addr == 0xFFFFFFFFu ||
+         ws_nw_left_hud_packet_hi <= ws_nw_left_hud_packet_lo)
+         return 0;
+     uint32_t a = gp0_cmd_source_addr & 0x1FFFFFFFu;
+     int matched = a >= ws_nw_left_hud_packet_lo && a < ws_nw_left_hud_packet_hi;
++    if (!matched && ws_nw_left_hud_packet2_hi > ws_nw_left_hud_packet2_lo)
++        matched = a >= ws_nw_left_hud_packet2_lo && a < ws_nw_left_hud_packet2_hi;
+     return matched;
+ }
+ static int32_t ws_nw_hud_shift(int32_t x, int32_t w) {
+diff --git a/runtime/src/main.cpp b/runtime/src/main.cpp
+index cf33df28..5023bd6a 100644
+--- a/runtime/src/main.cpp
++++ b/runtime/src/main.cpp
+@@ -16435,6 +16435,8 @@ int main(int argc, char** argv) {
+             /* Targeted left-HUD packet range — avoids shifting 2D scenery. */
+             gpu_ws_set_nw_left_hud_packet_range(gc.ws_nw_left_hud_packet_lo,
+                                                 gc.ws_nw_left_hud_packet_hi);
++            gpu_ws_set_nw_left_hud_packet_range2(gc.ws_nw_left_hud_packet2_lo,
++                                                 gc.ws_nw_left_hud_packet2_hi);
+             /* [widescreen] nw_backdrop — stretch full-frame 2D sky backdrop. */
+             gpu_ws_set_nw_backdrop(gc.ws_nw_backdrop ? 1 : 0);
+             /* [widescreen] nw_flat_backdrop — stretch flat sky/backdrop prims

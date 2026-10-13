@@ -1,0 +1,208 @@
+diff --git a/recompiler/src/config_loader.cpp b/recompiler/src/config_loader.cpp
+index 8675d7e3..569c4bdc 100644
+--- a/recompiler/src/config_loader.cpp
++++ b/recompiler/src/config_loader.cpp
+@@ -919,6 +919,10 @@ static RuntimeConfig parse_runtime_block(const toml::value& cfg, const fs::path&
+         if (video.contains("frame_generation")) {
+             rt.video_frame_generation = toml::find<bool>(video, "frame_generation");
+         }
++        if (video.contains("frame_generation_allowed")) {
++            rt.video_frame_generation_allowed =
++                toml::find<bool>(video, "frame_generation_allowed");
++        }
+         if (video.contains("frame_generation_method")) {
+             const auto m = toml::find<std::string>(video, "frame_generation_method");
+             if      (m == "redraw")       rt.video_frame_generation_method = 0;
+@@ -2820,7 +2824,138 @@ static bool valid_user_audio_freq(int n) {
+     return n == 32040 || n == 32000 || n == 44100 || n == 48000;
+ }
+ 
++/* TwistedMetal1234Recomp: one set of display, audio, hotkey, controller and
++ * language settings for every game the hub starts.
++ *
++ * Each game keeps its own settings.toml (disc, memory cards and launcher state
++ * stay per game). When the folder above the game's holds the hub's games.txt,
++ * the sections below are also kept in shared-settings.toml there: a save
++ * copies them out, and a load copies them back in first. The button binding
++ * files are shared the same way (sync_shared_bindings). */
++static const char* const kSharedSections[] = {
++    "video", "audio", "hotkeys", "controller", "localization"
++};
++
++static fs::path shared_settings_path(const fs::path& path) {
++    std::error_code ec;
++    if (path.filename() != "settings.toml") return {};
++    const fs::path hub = fs::absolute(path, ec).parent_path().parent_path();
++    if (ec || hub.empty() || !fs::exists(hub / "games.txt", ec)) return {};
++    return hub / "shared-settings.toml";
++}
++
++static bool is_shared_section(const std::string& name) {
++    for (const char* shared : kSharedSections)
++        if (name == shared) return true;
++    return false;
++}
++
++/* Split settings text into (top-level table name, text) blocks; the text
++ * before the first table header has an empty name. */
++static std::vector<std::pair<std::string, std::string>>
++split_settings_sections(const fs::path& file) {
++    std::vector<std::pair<std::string, std::string>> out;
++    out.emplace_back(std::string(), std::string());
++    std::ifstream in(file);
++    std::string line;
++    while (std::getline(in, line)) {
++        if (!line.empty() && line.back() == '\r') line.pop_back();
++        if (!line.empty() && line[0] == '[') {
++            size_t a = line.find_first_not_of('[');
++            size_t b = line.find_first_of("].", a);
++            if (a != std::string::npos && b != std::string::npos)
++                out.emplace_back(line.substr(a, b - a), std::string());
++        }
++        out.back().second += line + "\n";
++    }
++    return out;
++}
++
++/* Button bindings live in two files beside settings.toml (keyboard and
++ * gamepad maps). They are shared whole: whichever copy was written last, the
++ * game's or the shared one, replaces the other. A copy keeps the source's
++ * timestamp so an unchanged file is never copied back. */
++static const char* const kSharedBindingFiles[] = { "keybinds.ini", "input.ini" };
++
++static void copy_binding_file(const fs::path& from, const fs::path& to) {
++    std::error_code ec;
++    fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
++    if (ec) return;
++    const auto stamp = fs::last_write_time(from, ec);
++    if (!ec) fs::last_write_time(to, stamp, ec);
++}
++
++/* prefer_local: on a save the game's own file is the one just written. */
++static void sync_shared_bindings(const fs::path& path, bool prefer_local) {
++    const fs::path shared_settings = shared_settings_path(path);
++    if (shared_settings.empty()) return;
++    for (const char* name : kSharedBindingFiles) {
++        const fs::path local = path.parent_path() / name;
++        const fs::path shared = shared_settings.parent_path() / (std::string("shared-") + name);
++        std::error_code ec;
++        const bool have_local = fs::exists(local, ec), have_shared = fs::exists(shared, ec);
++        if (!have_local && !have_shared) continue;
++        if (!have_shared) { copy_binding_file(local, shared); continue; }
++        if (!have_local) { copy_binding_file(shared, local); continue; }
++        const auto local_time = fs::last_write_time(local, ec);
++        const auto shared_time = fs::last_write_time(shared, ec);
++        if (local_time > shared_time) copy_binding_file(local, shared);
++        else if (shared_time > local_time && !prefer_local) copy_binding_file(shared, local);
++    }
++}
++
++static void pull_shared_settings(const fs::path& path) {
++    sync_shared_bindings(path, false);
++    const fs::path shared = shared_settings_path(path);
++    std::error_code ec;
++    if (shared.empty() || !fs::exists(shared, ec)) return;
++    const auto theirs = split_settings_sections(shared);
++    std::string merged, before;
++    bool placed = false;
++    auto place = [&] {
++        if (placed) return;
++        placed = true;
++        for (const auto& block : theirs)
++            if (is_shared_section(block.first)) merged += block.second;
++        if (merged.size() >= 2 && merged.compare(merged.size() - 2, 2, "\n\n") != 0)
++            merged += "\n";
++    };
++    if (fs::exists(path, ec)) {
++        for (const auto& block : split_settings_sections(path)) {
++            before += block.second;
++            if (is_shared_section(block.first)) place();
++            else merged += block.second;
++        }
++    }
++    place();
++    if (merged == before) return;
++    std::ofstream out(path, std::ios::trunc | std::ios::binary);
++    out << merged;
++}
++
++static void push_shared_settings(const fs::path& path) {
++    sync_shared_bindings(path, true);
++    const fs::path shared = shared_settings_path(path);
++    if (shared.empty()) return;
++    std::string text =
++        "# Settings shared by every game in the collection. Written whenever a\n"
++        "# game's launcher saves; edit a game's settings.toml or this file.\n\n";
++    for (const auto& block : split_settings_sections(path))
++        if (is_shared_section(block.first)) text += block.second;
++    std::ofstream out(shared, std::ios::trunc | std::ios::binary);
++    out << text;
++}
++
++static bool save_user_settings_file(const fs::path& path, const UserSettings& s);
++
++bool save_user_settings(const fs::path& path, const UserSettings& s) {
++    if (!save_user_settings_file(path, s)) return false;
++    push_shared_settings(path);
++    return true;
++}
++
+ UserSettings load_user_settings(const fs::path& path) {
++    pull_shared_settings(path);
+     UserSettings s;
+     std::error_code ec;
+     if (path.empty() || !fs::exists(path, ec)) return s;
+@@ -3252,7 +3387,7 @@ fs::path relative_to_folder(const fs::path& p, const fs::path& folder) {
+     return r;
+ }
+ 
+-bool save_user_settings(const fs::path& path, const UserSettings& s) {
++static bool save_user_settings_file(const fs::path& path, const UserSettings& s) {
+     std::error_code ec;
+     if (!path.parent_path().empty())
+         fs::create_directories(path.parent_path(), ec);  // best-effort
+diff --git a/recompiler/src/config_loader.h b/recompiler/src/config_loader.h
+index 502d6d7e..7dd34520 100644
+--- a/recompiler/src/config_loader.h
++++ b/recompiler/src/config_loader.h
+@@ -622,6 +622,9 @@ struct RuntimeConfig {
+     // frame of latency (docs/FRAME_GENERATION.md). Off by default;
+     // PSX_FRAME_GEN=0/1 overrides.
+     bool                  video_frame_generation = false;
++    // TwistedMetal1234Recomp: [video] frame_generation_allowed = false makes
++    // a title ignore the player's (shared) frame_generation setting.
++    bool                  video_frame_generation_allowed = true;
+     // frame_generation_method: how in-between frames are made. 0 "redraw"
+     // (default: the recorded list drawn again), 1 "reprojection" (opt-in per
+     // title: the newer real frame warped; tuned on R4). PSX_FRAME_GEN_METHOD
+diff --git a/runtime/src/main.cpp b/runtime/src/main.cpp
+index 3ecfd797..5c98acee 100644
+--- a/runtime/src/main.cpp
++++ b/runtime/src/main.cpp
+@@ -1520,6 +1520,8 @@ static int           g_present_thread_pref = 0;
+ static int           g_frame_generation_pref = 0;
+ /* TwistedMetal1234Recomp: [video] fps_mode (0 normal, 30, 60). */
+ static int           g_fps_mode = 0;
++/* TwistedMetal1234Recomp: [video] frame_generation_allowed. */
++static int           g_frame_generation_allowed = 1;
+ static int           g_present_thread_slots = 3;
+ static int           s_render_thread_tried = 0;
+ static int           g_video_vsync        = 1;
+@@ -16369,6 +16371,7 @@ int main(int argc, char** argv) {
+                 gc.runtime.video_texture_window_batching ? 1 : 0);
+             g_render_thread = gc.runtime.video_render_thread ? 1 : 0;
+             g_frame_generation = gc.runtime.video_frame_generation ? 1 : 0;
++            g_frame_generation_allowed = gc.runtime.video_frame_generation_allowed ? 1 : 0;
+             g_frame_generation_method = gc.runtime.video_frame_generation_method;
+             /* [timing] guest_cycle_scale is a title constant from game.toml
+              * (no player setting). PSX_GUEST_CYCLE_SCALE overrides it for
+@@ -18805,6 +18808,9 @@ session_reboot:
+     g_render_thread_pref = g_render_thread;
+     g_present_thread_pref = g_present_thread;
+     g_frame_generation_pref = g_frame_generation;
++    /* The setting is shared by every game in the collection; a title that
++     * cannot use it keeps the player's choice but runs without it. */
++    if (!g_frame_generation_allowed) g_frame_generation = 0;
+     if (const char* e = std::getenv("PSX_RENDER_THREAD"))
+         g_render_thread = (*e && *e != '0') ? 1 : 0;
+     if (const char* e = std::getenv("PSX_PRESENT_THREAD"))

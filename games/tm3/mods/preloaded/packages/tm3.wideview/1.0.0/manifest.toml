@@ -1,0 +1,26 @@
+format_version = 7
+id = "tm3.wideview"
+version = "1.0.0"
+name = "Twisted Metal III Wide View Terrain"
+author = "TwistedMetal1234Recomp"
+description = "Draws the terrain a view wider than 16:9 reveals at its edges."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SCUS-94249"
+
+# Always on and not shown in the Mods list: it does nothing at 4:3 and 16:9,
+# and without it 21:9 has holes in the ground at the screen edges.
+[[feature]]
+id = "wideview"
+name = "Wide view terrain"
+description = "The game picks terrain cells from lists prepared for a 4:3 view. This also draws the neighbouring headings' cells while the view is wider than 16:9."
+group = "Visual"
+default_enabled = true
+hidden = true
+
+# Code hooks (mods/src/tm3_wideview.c).
+[[plugin]]
+feature = "wideview"
+id = "tm3.wideview"

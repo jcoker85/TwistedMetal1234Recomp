@@ -1,0 +1,188 @@
+diff --git a/recompiler/src/config_loader.cpp b/recompiler/src/config_loader.cpp
+index d4ea8961..8675d7e3 100644
+--- a/recompiler/src/config_loader.cpp
++++ b/recompiler/src/config_loader.cpp
+@@ -2974,6 +2974,12 @@ UserSettings load_user_settings(const fs::path& path) {
+             s.frame_generation = toml::find<bool>(v, "frame_generation");
+             s.has_frame_generation = true;
+         });
++        if (v.contains("fps_mode")) try_get([&]{
++            const auto m = toml::find<std::string>(v, "fps_mode");
++            if      (m == "normal") { s.fps_mode = 0;  s.has_fps_mode = true; }
++            else if (m == "30")     { s.fps_mode = 30; s.has_fps_mode = true; }
++            else if (m == "60")     { s.fps_mode = 60; s.has_fps_mode = true; }
++        });
+         if (v.contains("vsync")) try_get([&]{
+             const auto m = toml::find<std::string>(v, "vsync");
+             if      (m == "on"  || m == "vsync")    { s.vsync = 1;  s.has_vsync = true; }
+@@ -3337,6 +3343,8 @@ bool save_user_settings(const fs::path& path, const UserSettings& s) {
+         f << "present_thread = " << (s.present_thread ? "true" : "false") << "\n";
+     if (s.has_frame_generation)
+         f << "frame_generation = " << (s.frame_generation ? "true" : "false") << "\n";
++    if (s.has_fps_mode)
++        f << "fps_mode = \"" << (s.fps_mode == 60 ? "60" : s.fps_mode == 30 ? "30" : "normal") << "\"\n";
+     if (s.has_vsync)
+         f << "vsync             = \"" << (s.vsync == 0 ? "immediate" : s.vsync < 0 ? "adaptive"
+                                          : s.vsync == 2 ? "vrr" : "on") << "\"\n";
+diff --git a/recompiler/src/config_loader.h b/recompiler/src/config_loader.h
+index ccd993a6..502d6d7e 100644
+--- a/recompiler/src/config_loader.h
++++ b/recompiler/src/config_loader.h
+@@ -1537,6 +1537,10 @@ struct UserSettings {
+     bool has_render_thread    = false; bool render_thread    = false;
+     bool has_present_thread   = false; bool present_thread   = false;
+     bool has_frame_generation = false; bool frame_generation = false;
++    // TwistedMetal1234Recomp: [video] fps_mode = "normal" | "30" | "60", the
++    // game's own frame rate cap (0, 30 or 60 here). Applied at launch by
++    // enabling the title's hidden "fps_mode" mod feature.
++    bool has_fps_mode         = false; int  fps_mode         = 0;
+     bool has_vsync             = false; int  vsync             = 1;
+     bool has_frame_interpolation = false; bool frame_interpolation = false;
+     bool has_frame_interpolation_fps = false; int frame_interpolation_fps = 0;
+diff --git a/runtime/include/mod_runtime.h b/runtime/include/mod_runtime.h
+index 4f51a2df..db5ac387 100644
+--- a/runtime/include/mod_runtime.h
++++ b/runtime/include/mod_runtime.h
+@@ -19,6 +19,10 @@ bool mod_runtime_initialize(const std::filesystem::path& root,
+                             uint32_t game_entry_pc,
+                             const std::filesystem::path& exe_path = {},
+                             std::string* error = nullptr);
++/* TwistedMetal1234Recomp: the launcher's FPS Mode setting. Every package
++ * with a feature "fps_mode" (option "rate" = "30" | "60") has it enabled for
++ * 30 or 60 and disabled for 0. Call before mod_runtime_commit(). */
++void mod_runtime_apply_fps_mode(int fps);
+ bool mod_runtime_commit(const std::filesystem::path& disc_path = {},
+                         std::string* error = nullptr,
+                         bool save_selection = true);
+diff --git a/runtime/src/main.cpp b/runtime/src/main.cpp
+index 7182b30a..3ecfd797 100644
+--- a/runtime/src/main.cpp
++++ b/runtime/src/main.cpp
+@@ -1518,6 +1518,8 @@ static int           g_present_thread = 0;
+ static int           g_render_thread_pref = 0;
+ static int           g_present_thread_pref = 0;
+ static int           g_frame_generation_pref = 0;
++/* TwistedMetal1234Recomp: [video] fps_mode (0 normal, 30, 60). */
++static int           g_fps_mode = 0;
+ static int           g_present_thread_slots = 3;
+ static int           s_render_thread_tried = 0;
+ static int           g_video_vsync        = 1;
+@@ -15718,6 +15720,7 @@ namespace {
+ #if defined(RECOMP_LAUNCHER_HAS_RENDER_PIPELINE)
+         gi->has_render_pipeline = 1;   /* OpenGL rows; the launcher gates */
+ #endif
++        gi->has_fps_mode = 1;
+         if (language_labels && num_languages > 0) {
+             gi->language_labels = language_labels;
+             gi->num_languages = num_languages;
+@@ -16966,6 +16969,7 @@ int main(int argc, char** argv) {
+         if (us.has_render_thread)     g_render_thread     = us.render_thread ? 1 : 0;
+         if (us.has_present_thread)    g_present_thread    = us.present_thread ? 1 : 0;
+         if (us.has_frame_generation)  g_frame_generation  = us.frame_generation ? 1 : 0;
++        if (us.has_fps_mode)          g_fps_mode          = us.fps_mode;
+         if (us.has_vsync)             g_video_vsync       = us.vsync;
+         if (us.has_frame_interpolation)
+             g_frame_interpolation = us.frame_interpolation ? 1 : 0;
+@@ -17421,6 +17425,7 @@ int main(int argc, char** argv) {
+             seed.render_thread = g_render_thread != 0;
+             seed.present_thread = g_present_thread != 0;
+             seed.frame_generation = g_frame_generation != 0;
++            seed.fps_mode = g_fps_mode;
+ #endif
+ #if defined(RECOMP_LAUNCHER_HAS_DYNAMIC_RESOLUTION)
+             seed.dynamic_resolution_min = dynres_min_value();
+@@ -17637,6 +17642,7 @@ int main(int argc, char** argv) {
+             ls.render_thread    = seed.render_thread ? 1 : 0;
+             ls.present_thread   = seed.present_thread ? 1 : 0;
+             ls.frame_generation = seed.frame_generation ? 1 : 0;
++            ls.fps_mode = seed.fps_mode == 60 ? 2 : seed.fps_mode == 30 ? 1 : 0;
+ #endif
+             ls.antialiasing       = seed.antialiasing ? 1 : 0;
+             ls.texture_filter     = seed.texture_filter;
+@@ -18000,6 +18006,7 @@ int main(int argc, char** argv) {
+                 seed.render_thread    = ls.render_thread != 0;    seed.has_render_thread    = true;
+                 seed.present_thread   = ls.present_thread != 0;   seed.has_present_thread   = true;
+                 seed.frame_generation = ls.frame_generation != 0; seed.has_frame_generation = true;
++                seed.fps_mode = ls.fps_mode == 2 ? 60 : ls.fps_mode == 1 ? 30 : 0; seed.has_fps_mode = true;
+ #endif
+                 seed.antialiasing          = ls.antialiasing != 0;     seed.has_antialiasing          = true;
+                 seed.geometry_correction   = ls.geometry_correction != 0;
+@@ -18277,6 +18284,7 @@ int main(int argc, char** argv) {
+                 g_render_thread    = seed.render_thread ? 1 : 0;
+                 g_present_thread   = seed.present_thread ? 1 : 0;
+                 g_frame_generation = seed.frame_generation ? 1 : 0;
++                g_fps_mode = seed.fps_mode;
+ #endif
+                 g_video_aa        = seed.antialiasing;
+                 g_video_texfilter = seed.texture_filter;
+@@ -18417,7 +18425,8 @@ int main(int argc, char** argv) {
+                              mod_error.c_str());
+                 return 1;
+             }
+-        } else if (!PSXRecompV4::mod_runtime_commit(resolved_disc, &mod_error)) {
++        } else if (PSXRecompV4::mod_runtime_apply_fps_mode(g_fps_mode),
++                   !PSXRecompV4::mod_runtime_commit(resolved_disc, &mod_error)) {
+             std::fprintf(stderr, "psxrecomp: cannot launch with selected mods: %s\n",
+                          mod_error.c_str());
+             return 1;
+@@ -20145,6 +20154,7 @@ soft_return_lobby:
+         ls.render_thread    = g_render_thread_pref;
+         ls.present_thread   = g_present_thread_pref;
+         ls.frame_generation = g_frame_generation_pref;
++        ls.fps_mode = g_fps_mode == 60 ? 2 : g_fps_mode == 30 ? 1 : 0;
+ #endif
+         ls.antialiasing = g_video_aa ? 1 : 0;
+         ls.texture_filter = g_video_texfilter;
+@@ -20538,6 +20548,8 @@ soft_return_lobby:
+                 us.render_thread    = ls.render_thread != 0;    us.has_render_thread    = true;
+                 us.present_thread   = ls.present_thread != 0;   us.has_present_thread   = true;
+                 us.frame_generation = ls.frame_generation != 0; us.has_frame_generation = true;
++                g_fps_mode = ls.fps_mode == 2 ? 60 : ls.fps_mode == 1 ? 30 : 0;
++                us.fps_mode = g_fps_mode; us.has_fps_mode = true;
+                 g_render_thread_pref    = ls.render_thread ? 1 : 0;
+                 g_present_thread_pref   = ls.present_thread ? 1 : 0;
+                 g_frame_generation_pref = ls.frame_generation ? 1 : 0;
+@@ -20745,7 +20757,8 @@ soft_return_lobby:
+                         SDL_Quit();
+                         return 1;
+                     }
+-                } else if (!PSXRecompV4::mod_runtime_commit(resolved_disc,
++                } else if (PSXRecompV4::mod_runtime_apply_fps_mode(g_fps_mode),
++                           !PSXRecompV4::mod_runtime_commit(resolved_disc,
+                                                             &mod_error)) {
+                     std::fprintf(stderr,
+                                  "psxrecomp: cannot relaunch with selected "
+diff --git a/runtime/src/mod_runtime.cpp b/runtime/src/mod_runtime.cpp
+index 86913b04..2629484e 100644
+--- a/runtime/src/mod_runtime.cpp
++++ b/runtime/src/mod_runtime.cpp
+@@ -2079,6 +2079,29 @@ static bool install_plan(RuntimeMods& s, ModResolution plan,
+     return true;
+ }
+ 
++void mod_runtime_apply_fps_mode(int fps) {
++    RuntimeMods& s = state();
++    if (!s.initialized) return;
++    const bool want = fps == 30 || fps == 60;
++    std::vector<std::string> ids;
++    for (const auto& entry : s.manager.packages()) ids.push_back(entry.first);
++    for (const std::string& id : ids) {
++        if (!s.manager.selected_feature(id, "fps_mode")) continue;
++        std::string err;
++        bool ok = s.manager.set_feature_enabled(id, "fps_mode", want, &err);
++        if (ok && want)
++            ok = s.manager.set_feature_option(id, "fps_mode", "rate",
++                                              fps == 60 ? "60" : "30", &err);
++        s.ticket_ready = false;
++        if (ok)
++            std::fprintf(stdout, "psxrecomp: FPS mode %s (%s)\n",
++                         fps == 60 ? "60" : fps == 30 ? "30" : "normal", id.c_str());
++        else
++            std::fprintf(stderr, "psxrecomp: cannot set FPS mode on %s: %s\n",
++                         id.c_str(), err.c_str());
++    }
++}
++
+ bool mod_runtime_commit(const std::filesystem::path& disc_path, std::string* error, bool save_selection) {
+     HostLaunchTimingScope timing(HOST_LAUNCH_COMMIT);
+     RuntimeMods& s = state();

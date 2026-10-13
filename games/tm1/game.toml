@@ -1,0 +1,115 @@
+# Autofilled by tools/new_project_layout/probe_disc.py from your legal dump.
+# Review before shipping. Runtime quirks / overlay seeds still need hand work.
+
+[game]
+name = "Twisted Metal"
+id = "SCUS-94304"
+players = 2
+exe = "disc/SCUS_943.04"
+# No default disc: the player chooses their own image in the launcher, and
+# tools/generate.sh is given its path.
+load_address = "0x800F78B8"
+entry_pc = "0x8010CD28"
+text_size = "0x00097800"
+stack_base = "0x801FFFF0"
+
+# Digests are for data Track 01 (first BINARY FILE / TRACK 01).
+[prepare_disc]
+out_dir = "disc"
+bin_name = "Twisted Metal (Track 1).bin"
+cue_name = "Twisted Metal.cue"
+boot_exe = "SCUS_943.04"
+known_sizes = [92734656]
+known_md5 = [
+  "97a54e230760ccf81a79a46665ba1969",
+]
+known_sha1 = [
+  "94d5cdc90172ba0f5294b480d200e975ea2ad256",
+]
+known_crc32 = [
+  "3b31a2c3",
+]
+
+[recompiler]
+seeds = "seeds/ghidra_funcs.txt"
+out_dir = "generated"
+strict = true
+# Instructions the tm1.framerate plugin hooks (mods/src/tm1_framerate.c): the
+# steps applied to a car's speed each frame. Changing this list needs a
+# regenerate (tools/generate.sh).
+mod_instruction_sites = [
+    "0x801132CC",
+    "0x801132B4",
+    "0x801133B8",
+    "0x801133E0",
+    "0x801134BC",
+    "0x801134E8",
+    "0x801141DC",
+    "0x801141FC",
+    "0x801146CC",
+    "0x801146F4",
+    "0x801179CC",
+    "0x8011E85C",
+    "0x8011E8DC",
+    "0x8011E90C",
+    "0x8011E928",
+    "0x8011CB6C",
+    "0x8011CBA8",
+    "0x8015395C",
+    "0x80153994",
+    "0x80153884",
+    "0x801538FC",
+    "0x80153940",
+    "0x80112DD8",
+    "0x80112CB4",
+    "0x80112CEC",
+    "0x80112DB8",
+    "0x80112D8C",
+]
+# Functions the plugin may skip: logic that counts frames instead of time.
+mod_function_entry_funcs = ["0x80132658", "0x801374F4", "0x80136AF8"]
+
+[runtime]
+# The frame rate patches are a hidden mod feature that the launcher's FPS Mode
+# setting switches; keep it out of the Mods list.
+hide_hidden_mod_features = true
+window_title = "Twisted Metal Recompiled"
+memcard_dir = "saves"
+overlay_cache = true
+
+[video]
+renderer = "opengl"
+aspect_ratio = "4:3"
+# Settings are shared by all four games; Smooth Motion only holds up on
+# Twisted Metal 4, so this game ignores it.
+frame_generation_allowed = false
+
+# Widescreen is the launcher's Settings -> Aspect ratio choice (4:3, 16:9 or
+# 21:9); these keys are inert at 4:3.
+[widescreen]
+gte_game_mode = true
+# HUD primitives are built in a static packet buffer past the EXE image
+# (census: 0x19F000..0x1A2000), while world polygons come from a pool at
+# 0x1D3000+. Only packets in this range are re-anchored to the wide corners.
+nw_left_hud_packet_lo = "0x00190000"
+nw_left_hud_packet_hi = "0x001B0000"
+
+# Inert unless the tm1.framerate mod is active: a faster frame needs more game
+# code per refresh than PS1 timing allows, so the emulated CPU is charged a
+# quarter of its cycle cost. The gate reads the main-loop instruction the mod
+# patches (0x800FFA58): it matches `ori $v1, $zr, <cap>` and not the stock load.
+[timing]
+guest_cycle_scale = 4
+guest_cycle_scale_gate = [
+  { addr = 0x800FFA58, mask = 0xFFFFFF00, value = 0x34030000 },
+]
+
+[controller]
+default_mode = "digital"
+
+# Online mount gate: digests + track count + optional TOC fingerprint
+# (see docs/NETPLAY.md).
+[netplay]
+require_cue = true
+required_tracks = 9
+required_disc_fp = "3f1603ad50b3e211301ca3a8ae5f13c15870a1329503c33864124dc66ecebfe3"

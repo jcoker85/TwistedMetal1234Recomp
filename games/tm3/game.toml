@@ -1,0 +1,129 @@
+# Autofilled by tools/new_project_layout/probe_disc.py from your legal dump.
+# Review before shipping. Runtime quirks / overlay seeds still need hand work.
+
+[game]
+name = "Twisted Metal III"
+id = "SCUS-94249"
+players = 4
+# The boot EXE on disc is padded with 153,600 zero bytes past the size its
+# header declares, which psxrecomp-game rejects. Trim disc/SCUS_942.49 to
+# 501,760 bytes (2048 + t_size) before running psxrecomp-game --config game.toml.
+exe = "disc/SCUS_942.49"
+# No default disc: the player chooses their own image in the launcher, and
+# tools/generate.sh is given its path.
+load_address = "0x80010000"
+entry_pc = "0x8006231C"
+text_size = "0x0007A000"
+stack_base = "0x801FFFF0"
+
+# Digests are for data Track 01 (first BINARY FILE / TRACK 01).
+[prepare_disc]
+out_dir = "disc"
+bin_name = "Twisted Metal III (Track 1).bin"
+cue_name = "Twisted Metal III.cue"
+boot_exe = "SCUS_942.49"
+known_sizes = [249751824]
+known_md5 = [
+  "290c067cbe3ecea770eb7685fe9e7454",
+]
+known_sha1 = [
+  "ced9543be09202d3fa28a6a6520a84d0ee256276",
+]
+known_crc32 = [
+  "1f403249",
+]
+
+[recompiler]
+seeds = "seeds/ghidra_funcs.txt"
+out_dir = "generated"
+strict = true
+# Instructions the tm3.wideview plugin hooks (mods/src/tm3_wideview.c): the
+# terrain cell loop's list setup, cell fetch and pass end. Changing this list
+# needs a regenerate (tools/generate.sh).
+mod_instruction_sites = ["0x80010C44", "0x80010CBC", "0x8001115C"]
+
+[runtime]
+# The wide view terrain fix is an always-on hidden mod feature; keep it out of
+# the Mods list.
+hide_hidden_mod_features = true
+window_title = "Twisted Metal III Recompiled"
+memcard_dir = "saves"
+overlay_cache = true
+
+[video]
+renderer = "opengl"
+aspect_ratio = "4:3"
+# Settings are shared by all four games; Smooth Motion only holds up on
+# Twisted Metal 4, so this game ignores it.
+frame_generation_allowed = false
+
+# Widescreen is the launcher's Settings -> Aspect ratio choice (4:3, 16:9 or
+# 21:9); these keys are inert at 4:3.
+[widescreen]
+# The menus are drawn in 3D, so "any frame with GTE projections" would widen
+# them too and spread their text. 0x800896A0 is 1 while a front-end menu is up
+# and 0 otherwise (boot, loading, levels, and the screens between tournament
+# levels), so widescreen is on whenever it is 0. An earlier gate on 0x80089D4C
+# ("level running") dropped back to 4:3 on the second tournament level.
+gameplay_state_addr = "0x800896A0"
+gameplay_state_values = ["0x0"]
+# Still needed with the gate: it turns off the 2D-scene classifier, which
+# otherwise presents the level itself at 4:3.
+gte_game_mode = true
+# HUD primitives are double-buffered: packet buffers at 0xA8000..0xAD000 on
+# one frame and 0xCC000..0xD1000 on the next (census), with world polygons
+# between and around them. Only packets in these two ranges are re-anchored to
+# the wide corners. The second range needs patches/psxrecomp-second-hud-packet-range.patch
+# applied to the psxrecomp submodule.
+# These are starting values: the buffers move from level to level, and
+# mods/src/tm3_wideview.c updates both ranges from the game's buffer pointers.
+nw_left_hud_packet_lo = "0x000A8000"
+nw_left_hud_packet_hi = "0x000B0000"
+nw_left_hud_packet2_lo = "0x000CC000"
+nw_left_hud_packet2_hi = "0x000D4000"
+
+# The world renderer flags each projected vertex whose screen X lies outside
+# 0..width (`sltu flag, width, (u16)SX`, which also catches negative X) and
+# drops a polygon when all of its vertices are flagged. In widescreen that
+# leaves holes in the revealed side bands, so while the view is widened these
+# compares are forced to "inside". 4:3 keeps the original test. Changing this
+# list needs a regenerate (tools/generate.sh).
+[[widescreen.cull.keep]]
+address = "0x80010E7C"
+expected = "0x0161082B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x80010E80"
+expected = "0x0167382B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x80010E84"
+expected = "0x0178C02B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x80010ECC"
+expected = "0x0161082B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x80010ED0"
+expected = "0x0167382B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x80010ED4"
+expected = "0x0178C02B"
+result = 0
+
+[controller]
+default_mode = "digital"
+
+# Online mount gate: digests + track count + optional TOC fingerprint
+# (see docs/NETPLAY.md).
+[netplay]
+require_cue = true
+required_tracks = 37
+required_disc_fp = "db147e43ebd2fad8de2594e00b39fa809d61c1998a3fd11d8b3f9ea441923c0b"
