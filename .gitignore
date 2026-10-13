@@ -1,0 +1,44 @@
+# Build outputs
+/build/
+/build-*/
+*.log
+/.idea/
+/.vs/
+/.vscode/
+/.claude/
+*.swp
+Thumbs.db
+.DS_Store
+
+# Recompiler output: derived from the games' own code, so it is regenerated
+# locally from your disc (tools/generate.sh) and never committed.
+games/*/generated/
+
+# Local PlayStation assets (never commit dumps / BIOS)
+games/*/disc/
+games/*/saves/
+games/*/bios/
+*.bin
+*.cue
+*.iso
+*.img
+*.chd
+*.mcd
+*.mcr
+SCPH*.BIN
+
+# Player state written next to a game when run from the source tree
+settings.toml
+/saves/
+
+# Cover art for the hub (tools/fetch_covers.sh); not ours to redistribute
+hub/covers/
+
+# BIOS work area the generate CLI stages under each game (build output)
+games/*/psxrecomp/
+
+# Hub icon artwork (tools/make_icon.ps1 builds the .ico from a PNG you supply)
+hub/icon/
+
+# Release packages (tools/package_release.sh)
+/dist/

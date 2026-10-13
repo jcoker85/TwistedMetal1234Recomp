@@ -1,0 +1,46 @@
+{
+  "format_version": 1,
+  "game": {
+    "name": "Twisted Metal 2",
+    "id": "SCUS-94306",
+    "boot_exe": "SCUS_943.06"
+  },
+  "marketing": {
+    "description": "",
+    "publisher": "",
+    "year": "",
+    "region": "",
+    "players": 2
+  },
+  "rom_identity": {
+    "cue_name": "Twisted Metal 2.cue",
+    "bin_name": "Twisted Metal 2 (Track 1).bin",
+    "track_counts": [
+      12
+    ],
+    "require_cue": true,
+    "data_track": {
+      "size": 418187952,
+      "md5": "21599a9f5d4853461427893774023afa",
+      "sha1": "d5dd081d860ce031a5d9601924c7d0f6afb33814",
+      "crc32": "c8f01e9d"
+    },
+    "disc_fp": "fc12073ddaa6a53f75351e552f3543bc89e6b6c8e9327384c87178f07a01cc6e"
+  },
+  "exe": {
+    "load_address": "0x800CDC54",
+    "entry_pc": "0x8013878C",
+    "text_size": "0x000B3800",
+    "stack_base": "0x801FFFF0"
+  },
+  "seeds": {
+    "count": 1502,
+    "source": "boot_exe_jal"
+  },
+  "warnings": [],
+  "notes": [
+    "entry_pc/load_address/text_size/stack_base taken from PS-X EXE header.",
+    "seeds are first-pass boot-EXE JAL targets (+ entry); expect to grow as overlays / runtime paths are discovered.",
+    "required_disc_fp is psxrecomp-toc-v1 (matches runtime DiscIdentity)."
+  ]
+}

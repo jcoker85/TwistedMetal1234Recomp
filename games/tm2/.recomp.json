@@ -1,0 +1,12 @@
+{
+  "$schema": "https://recomp.fyi/schema/v1.json",
+  "game": "TwistedMetal2",
+  "system": "PS1",
+  "type": "recomp",
+  "toolchain": "psxrecomp",
+  "status": "exploring",
+  "project": "TwistedMetal1234Recomp",
+  "original": {
+    "region": "USA"
+  }
+}

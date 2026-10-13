@@ -1,0 +1,133 @@
+format_version = 7
+id = "tm2.framerate"
+version = "1.0.0"
+name = "Twisted Metal 2 Frame Rate"
+author = "TwistedMetal1234Recomp"
+description = "Raises the game's own frame-rate cap from 20 to 30 or 60 frames per second."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SCUS-94306"
+
+[[feature]]
+id = "fps_mode"
+name = "Higher frame rate"
+description = "The game loop limits itself to 20 FPS and steps its simulation by the measured frame time. This raises the limit; game.toml speeds up the emulated CPU while the raised limit is in effect so a frame fits in one refresh."
+group = "Visual"
+default_enabled = false
+# Chosen with the launcher's Settings -> Display -> FPS Mode, not the Mods list.
+hidden = true
+
+[[option]]
+feature = "fps_mode"
+id = "rate"
+label = "Frame rate"
+type = "choice"
+default = "30"
+
+[[option.choice]]
+value = "60"
+label = "60 FPS"
+
+[[option.choice]]
+value = "30"
+label = "30 FPS"
+
+# Level setup: `ori $v0, $zr, 20` is the single-player frame-rate cap stored
+# to gp+0x14 (0x801809E8) and compared by the main loop's VSync wait.
+[[patch]]
+feature = "fps_mode"
+target = "main_exe"
+address = 0x800D13A4
+expected = "14 00 02 34"
+replace = "3c 00 02 34"
+when = { rate = "60" }
+
+[[patch]]
+feature = "fps_mode"
+target = "main_exe"
+address = 0x800D13A4
+expected = "14 00 02 34"
+replace = "1e 00 02 34"
+when = { rate = "30" }
+
+# libetc VSync(0) waits for the next VBlank in a busy loop bounded by an
+# iteration count (`ori $a1, $zr, 1`, shifted left 15 by the wait helper). With
+# the emulated CPU charged a quarter of its cost the loop spins four times as
+# fast, the bound expires before the VBlank arrives, and the game loop drifts
+# out of phase with the display until a buffer is cleared just before it is
+# shown (a blank frame). Raising the bound eightfold keeps the wait real.
+[[patch]]
+feature = "fps_mode"
+target = "main_exe"
+address = 0x801451BC
+expected = "01 00 05 34"
+replace = "08 00 05 34"
+
+# The loop's rate helper rounds the time since the last frame to whole
+# refreshes and returns rate / refreshes. For zero refreshes it returned 1
+# ("slower than one frame a second"), which ends the VSync wait at once. After
+# a frame that overran, the next one would therefore finish a few percent of a
+# refresh later, and the time step for that sliver was clamped up to three
+# refreshes, so the game clock ran fast at 30 and 60. Return a very high rate
+# for zero refreshes instead, so the loop keeps waiting for the VBlank.
+[[patch]]
+feature = "fps_mode"
+target = "main_exe"
+address = 0x801553E4
+expected = "0c 00 60 18 00 00 00 00 1a 80 02 3c 84 51 42 8c 00 00 00 00 1b 00 43 00 02 00 60 14 00 00 00 00 0d 00 07 00 12 18 00 00 00 00 00 00 02 00 60 1c 00 00 00 00 01 00 03 34"
+replace = "0b 00 60 18 00 00 00 00 1a 80 02 3c 84 51 42 8c 00 00 00 00 1b 00 43 00 12 18 00 00 00 00 00 00 05 00 60 1c 00 00 00 00 07 55 05 08 01 00 03 34 ff 7f 03 34 00 00 00 00"
+
+# The engine's two "move a value toward a target" helpers scale their step by
+# fps / 30, so a higher frame rate moves a larger share of the gap on every
+# call as well as calling more often: steering and other smoothed values
+# converged about 2.25 times as fast at 30 and 9 times as fast at 60. Scale by
+# elapsed refreshes instead (dt * 2 / 9), which is the same step as the
+# original at 20 FPS and stays time-based at other rates.
+[[patch]]  # read elapsed refreshes instead of the frame rate
+feature = "fps_mode"
+target = "main_exe"
+address = 0x80156C0C
+expected = "cb 54 05 0c"
+replace = "c7 54 05 0c"
+
+[[patch]]  # multiply by 2/9 (0x38E38E39 / 2^32) instead of dividing by 30
+feature = "fps_mode"
+target = "main_exe"
+address = 0x80156C28
+expected = "88 88 02 3c 89 88 42 34"
+replace = "e3 38 02 3c 39 8e 42 34"
+
+[[patch]]  # the high word is already the quotient: no dividend add, no shift
+feature = "fps_mode"
+target = "main_exe"
+address = 0x80156C3C
+expected = "21 10 e3 00 03 11 02 00"
+replace = "21 10 e0 00 00 00 00 00"
+
+[[patch]]  # read elapsed refreshes instead of the frame rate
+feature = "fps_mode"
+target = "main_exe"
+address = 0x80156CB8
+expected = "cb 54 05 0c"
+replace = "c7 54 05 0c"
+
+[[patch]]  # multiply by 2/9 (0x38E38E39 / 2^32) instead of dividing by 30
+feature = "fps_mode"
+target = "main_exe"
+address = 0x80156CCC
+expected = "88 88 02 3c 89 88 42 34"
+replace = "e3 38 02 3c 39 8e 42 34"
+
+[[patch]]  # the high word is already the quotient: no dividend add, no shift
+feature = "fps_mode"
+target = "main_exe"
+address = 0x80156CDC
+expected = "21 10 f0 00 03 11 02 00"
+replace = "21 10 e0 00 00 00 00 00"
+
+# Code hooks for fixes patches cannot express (mods/src/tm2_framerate.c).
+[[plugin]]
+feature = "fps_mode"
+id = "tm2.framerate"

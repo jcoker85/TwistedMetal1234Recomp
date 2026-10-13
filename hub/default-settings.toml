@@ -1,0 +1,34 @@
+# Display settings a fresh build starts with. The build copies this to
+# shared-settings.toml next to the hub when that file does not exist yet; it
+# never replaces a player's own. Every game reads the shared file at start, and
+# any game's launcher (Settings -> Display) changes it from there.
+
+[video]
+renderer          = "opengl"
+supersampling     = 4
+internal_resolution = "display"
+dynamic_resolution = false
+dynamic_resolution_min = "720p"
+window_width      = 1920
+antialiasing      = true
+texture_filtering = "bilinear"
+fmv_filter        = "bilinear"
+geometry_correction   = false
+perspective_texturing = false
+crt_filter        = "raw"
+scanlines         = false
+scanline_strength = 0.5
+fast_boot         = false
+bios_hle          = true
+fullscreen        = 1
+render_thread = true
+present_thread = false
+frame_generation = true
+fps_mode = "60"
+vsync             = "on"
+frame_interpolation = false
+frame_interpolation_fps = 0
+aspect_ratio      = "16:9"
+rewind            = false
+rewind_depth      = 50
+rewind_interval   = 15

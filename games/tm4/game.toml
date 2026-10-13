@@ -1,0 +1,143 @@
+# Autofilled by tools/new_project_layout/probe_disc.py from your legal dump.
+# Review before shipping. Runtime quirks / overlay seeds still need hand work.
+
+[game]
+name = "Twisted Metal 4"
+id = "SCUS-94560"
+players = 4
+exe = "disc/SCUS_945.60"
+# No default disc: the player chooses their own image in the launcher, and
+# tools/generate.sh is given its path.
+load_address = "0x80010000"
+entry_pc = "0x80010000"
+text_size = "0x00049800"
+stack_base = "0x801FFFF0"
+
+# Digests are for data Track 01 (first BINARY FILE / TRACK 01).
+[prepare_disc]
+out_dir = "disc"
+bin_name = "Twisted Metal 4 (Track 1).bin"
+cue_name = "Twisted Metal 4.cue"
+boot_exe = "SCUS_945.60"
+known_sizes = [384615504]
+known_md5 = [
+  "0e5d822f108fcef31057645721d3d710",
+]
+known_sha1 = [
+  "64e226413b27ea12639589b3ca2806976c795c8b",
+]
+known_crc32 = [
+  "020e8ae1",
+]
+
+[recompiler]
+seeds = "seeds/ghidra_funcs.txt"
+out_dir = "generated"
+strict = true
+# Instructions the tm4.wideview plugin hooks (mods/src/tm4_wideview.c): the
+# terrain cell loop's list setup, cell fetch and pass end. Changing this list
+# needs a regenerate (tools/generate.sh).
+mod_instruction_sites = ["0x8001EAC4", "0x8001EB34", "0x8001EEDC"]
+
+[runtime]
+# The wide view terrain fix is an always-on hidden mod feature; keep it out of
+# the Mods list.
+hide_hidden_mod_features = true
+window_title = "Twisted Metal 4 Recompiled"
+memcard_dir = "saves"
+overlay_cache = true
+
+[video]
+renderer = "opengl"
+aspect_ratio = "4:3"
+
+# Widescreen is the launcher's Settings -> Aspect ratio choice (4:3, 16:9 or
+# 21:9); these keys are inert at 4:3.
+[widescreen]
+gte_game_mode = true
+# Packets are double-buffered. In each buffer world polygons fill from the
+# start and the HUD is built 0x1BFA0 bytes in; only HUD packets are re-anchored
+# to the wide corners. The buffers move from level to level, so these are just
+# starting values: mods/src/tm4_wideview.c updates both ranges from the game's
+# buffer pointers every frame. The second range needs
+# patches/psxrecomp-second-hud-packet-range.patch.
+nw_left_hud_packet_lo = "0x001A2000"
+nw_left_hud_packet_hi = "0x001A8900"
+nw_left_hud_packet2_lo = "0x001C4800"
+nw_left_hud_packet2_hi = "0x001CB000"
+
+# The world renderer flags each projected vertex whose screen X lies outside
+# 0..width (`sltu flag, width, (u16)SX`, which also catches negative X) and
+# drops a polygon when all of its vertices are flagged. In widescreen that
+# leaves holes in the revealed side bands, so while the view is widened these
+# compares are forced to "inside". 4:3 keeps the original test. Changing this
+# list needs a regenerate (tools/generate.sh).
+[[widescreen.cull.keep]]
+address = "0x8001CBA0"
+expected = "0x0062102B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x8001CBB0"
+expected = "0x0062102B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x8001CBC0"
+expected = "0x0062182B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x8001CC08"
+expected = "0x0062102B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x8001CC18"
+expected = "0x0062102B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x8001CC28"
+expected = "0x0062182B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x8001ECBC"
+expected = "0x0161082B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x8001ECC0"
+expected = "0x0167382B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x8001ECC4"
+expected = "0x0178C02B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x8001ED08"
+expected = "0x0161082B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x8001ED0C"
+expected = "0x0167382B"
+result = 0
+
+[[widescreen.cull.keep]]
+address = "0x8001ED10"
+expected = "0x0178C02B"
+result = 0
+
+[controller]
+default_mode = "digital"
+
+# Online mount gate: digests + track count + optional TOC fingerprint
+# (see docs/NETPLAY.md).
+[netplay]
+require_cue = true
+required_tracks = 23
+required_disc_fp = "377a189a9a01f2a573199da42b2405e6e467269edcd5369610f8d640fd76fc1f"
