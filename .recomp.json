@@ -1,0 +1,27 @@
+{
+  "$schema": "https://recomp.fyi/schema/v1.json",
+  "game": "Twisted Metal",
+  "system": "PS1",
+  "type": "recomp",
+  "original": {
+    "region": "USA",
+    "serial": "SCUS-94304"
+  },
+  "project": "TwistedMetal1234Recomp",
+  "status": "released",
+  "targets": ["Windows"],
+  "toolchain": "Psxrecomp",
+  "approach": "Static recompilation with widescreen support and enhanced frame-rate options",
+  "maintainers": [
+    {
+      "name": "jcoker85",
+      "link": "https://github.com/jcoker85"
+    }
+  ],
+  "links": [
+    {
+      "label": "Source code",
+      "url": "https://github.com/jcoker85/TwistedMetal1234Recomp"
+    }
+  ]
+}
