@@ -37,8 +37,6 @@ hub/covers/
 # BIOS work area the generate CLI stages under each game (build output)
 games/*/psxrecomp/
 
-# Hub icon artwork (tools/make_icon.ps1 builds the .ico from a PNG you supply)
-hub/icon/
 
 # Release packages (tools/package_release.sh)
 /dist/

@@ -15,7 +15,8 @@
  * game's folder name) fills the background and cross-fades as the highlight
  * moves. Covers are not shipped: any that are missing are downloaded in the
  * background from the libretro-thumbnails project the first time the hub
- * runs, by the cover name in games.txt, and appear as they arrive.
+ * runs, by the cover name in games.txt, and appear as they arrive. The hub's
+ * own icon is downloaded the same way (fetch_icon).
  *
  * Controls: arrow keys + Enter, mouse, or a controller (D-pad + A, B to quit).
  */
@@ -29,7 +30,9 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <wchar.h>
+#include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #define MAX_GAMES 16
 #define CLIENT_W 720          /* jewel-case covers are square */
@@ -153,11 +156,197 @@ static void load_games(void) {
 HRESULT WINAPI URLDownloadToFileW(void* caller, const WCHAR* url, const WCHAR* file,
                                   DWORD reserved, void* callback);
 
+#define ICON_URL L"https://cdn2.steamgriddb.com/icon/7e05c692d4caf2bba2151187845ad69b/32/256x256.png"
+/* --- the hub's icon ----------------------------------------------------------
+ * The icon (credited in README.md) is not ours to redistribute, so it is not
+ * built into this program: the first start downloads it from SteamGridDB on the
+ * cover thread and turns it into covers\icon.ico (PNG images of 256, 48, 32 and
+ * 16 pixels). The hub's window takes it when it is ready (WM_ICON_READY), and it
+ * is written into this program's file for the next start (embed_icon). A square
+ * covers\icon.png put there by hand is used instead of the download. */
+#define WM_ICON_READY (WM_APP + 2)
+typedef struct { DWORD d1; WORD d2, d3; BYTE d4[8]; } GdipClsid;
+int WINAPI GdipCreateBitmapFromScan0(INT w, INT h, INT stride, INT format, BYTE* scan0, void** bitmap);
+int WINAPI GdipGetImageGraphicsContext(void* image, void** graphics);
+int WINAPI GdipGraphicsClear(void* graphics, DWORD argb);
+int WINAPI GdipSetPixelOffsetMode(void* graphics, int mode);
+int WINAPI GdipSaveImageToFile(void* image, const WCHAR* file, const GdipClsid* encoder, const void* params);
+
+static void icon_path(wchar_t* out, const wchar_t* ext) { swprintf(out, MAX_PATH, L"%ls\\covers\\icon.%ls", g_dir, ext); }
+
+static int file_exists(const wchar_t* path) { return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES; }
+
+/* covers\icon.png -> covers\icon.ico. Returns 1 when the .ico was written. */
+static int make_icon(void) {
+    static const GdipClsid png_encoder = { 0x557CF406, 0x1A04, 0x11D3, { 0x9A, 0x73, 0x00, 0x00, 0xF8, 0x1E, 0xF3, 0x2E } };
+    static const int sizes[4] = { 256, 48, 32, 16 };
+    wchar_t png[MAX_PATH], ico[MAX_PATH], part[MAX_PATH], tmp[MAX_PATH];
+    icon_path(png, L"png");
+    icon_path(ico, L"ico");
+    swprintf(part, MAX_PATH, L"%ls.part", ico);
+    void* src = NULL;
+    if (GdipLoadImageFromFile(png, &src) != 0 || !src) return 0;
+    BYTE* blob[4] = { 0 };
+    DWORD len[4] = { 0 };
+    int ok = 1;
+    for (int i = 0; i < 4 && ok; i++) {
+        void* bmp = NULL;
+        void* g = NULL;
+        ok = GdipCreateBitmapFromScan0(sizes[i], sizes[i], 0, 0x0026200A /* PixelFormat32bppARGB */, NULL, &bmp) == 0 && bmp;
+        if (ok && GdipGetImageGraphicsContext(bmp, &g) == 0 && g) {
+            GdipGraphicsClear(g, 0);
+            GdipSetInterpolationMode(g, 7);  /* high-quality bicubic */
+            GdipSetPixelOffsetMode(g, 4);    /* half: no dark seam at the edges */
+            GdipDrawImageRectI(g, src, 0, 0, sizes[i], sizes[i]);
+            GdipDeleteGraphics(g);
+        }
+        swprintf(tmp, MAX_PATH, L"%ls.%d.png", ico, sizes[i]);
+        ok = ok && GdipSaveImageToFile(bmp, tmp, &png_encoder, NULL) == 0;
+        if (bmp) GdipDisposeImage(bmp);
+        if (ok) {
+            FILE* f = _wfopen(tmp, L"rb");
+            ok = f != NULL;
+            if (ok) {
+                fseek(f, 0, SEEK_END);
+                len[i] = (DWORD)ftell(f);
+                fseek(f, 0, SEEK_SET);
+                blob[i] = (BYTE*)malloc(len[i] ? len[i] : 1);
+                ok = blob[i] && fread(blob[i], 1, len[i], f) == len[i];
+                fclose(f);
+            }
+        }
+        DeleteFileW(tmp);
+    }
+    GdipDisposeImage(src);
+    if (ok) {
+        FILE* f = _wfopen(part, L"wb");
+        ok = f != NULL;
+        if (ok) {
+            WORD head[3] = { 0, 1, 4 };  /* reserved, type 1 (icon), 4 images */
+            fwrite(head, 2, 3, f);
+            DWORD offset = 6 + 16 * 4;
+            for (int i = 0; i < 4; i++) {
+                BYTE dim = sizes[i] >= 256 ? 0 : (BYTE)sizes[i];  /* 0 means 256 */
+                BYTE e[4] = { dim, dim, 0, 0 };
+                WORD planes_bits[2] = { 1, 32 };
+                fwrite(e, 1, 4, f);
+                fwrite(planes_bits, 2, 2, f);
+                fwrite(&len[i], 4, 1, f);
+                fwrite(&offset, 4, 1, f);
+                offset += len[i];
+            }
+            for (int i = 0; i < 4; i++) ok = ok && fwrite(blob[i], 1, len[i], f) == len[i];
+            ok = fclose(f) == 0 && ok;
+        }
+        ok = ok && MoveFileExW(part, ico, MOVEFILE_REPLACE_EXISTING);
+        if (!ok) DeleteFileW(part);
+    }
+    for (int i = 0; i < 4; i++) free(blob[i]);
+    return ok;
+}
+
+/* Once the icon is here, it goes into this program's own file too, so that Explorer, shortcuts and the taskbar show it from
+ * the next start on. A running program cannot change its file, but it can rename it: this one moves itself to <name>.old,
+ * copies that back to <name> and writes the icon into the copy's resources (group 1, as a built-in icon would be). The next
+ * start runs the copy and deletes the .old file. If a step fails (a read-only folder, say), the old file is put back and the
+ * icon stays a window icon only. The icon is only written into the player's own copy, never into a release. */
+void WINAPI SHChangeNotify(LONG event, UINT flags, const void* item1, const void* item2);
+
+#pragma pack(push, 2)
+typedef struct { BYTE w, h, colors, reserved; WORD planes, bits; DWORD bytes; WORD id; } GroupIconEntry;
+#pragma pack(pop)
+
+static void embed_icon(void) {
+    wchar_t self[MAX_PATH], old[MAX_PATH], ico[MAX_PATH];
+    if (!GetModuleFileNameW(NULL, self, MAX_PATH)) return;
+    swprintf(old, MAX_PATH, L"%ls.old", self);
+    DeleteFileW(old);  /* left by the start that wrote the icon */
+    if (FindResourceW(NULL, MAKEINTRESOURCEW(1), (LPCWSTR)RT_GROUP_ICON)) return;  /* already in */
+    icon_path(ico, L"ico");
+    FILE* f = _wfopen(ico, L"rb");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    BYTE* data = size > 6 ? (BYTE*)malloc((size_t)size) : NULL;
+    int ok = data && fread(data, 1, (size_t)size, f) == (size_t)size;
+    fclose(f);
+    WORD count = ok ? *(WORD*)(data + 4) : 0;
+    ok = ok && *(WORD*)(data + 2) == 1 && count > 0 && count <= 16 && 6 + 16 * (long)count <= size;
+    for (WORD i = 0; ok && i < count; i++) {
+        const BYTE* e = data + 6 + 16 * i;
+        DWORD bytes = *(const DWORD*)(e + 8), at = *(const DWORD*)(e + 12);
+        ok = at <= (DWORD)size && bytes <= (DWORD)size - at;
+    }
+    if (ok && MoveFileExW(self, old, MOVEFILE_REPLACE_EXISTING)) {
+        int copied = CopyFileW(old, self, FALSE);
+        HANDLE h = copied ? BeginUpdateResourceW(self, FALSE) : NULL;
+        int written = h != NULL;
+        GroupIconEntry group_entries[16];
+        BYTE group[6 + sizeof group_entries];
+        for (WORD i = 0; written && i < count; i++) {
+            const BYTE* e = data + 6 + 16 * i;
+            DWORD bytes = *(const DWORD*)(e + 8), at = *(const DWORD*)(e + 12);
+            GroupIconEntry* g = &group_entries[i];
+            g->w = e[0], g->h = e[1], g->colors = e[2], g->reserved = 0;
+            g->planes = *(const WORD*)(e + 4), g->bits = *(const WORD*)(e + 6), g->bytes = bytes, g->id = (WORD)(i + 1);
+            written = UpdateResourceW(h, (LPCWSTR)RT_ICON, MAKEINTRESOURCEW(i + 1), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+                                      data + at, bytes);
+        }
+        if (written) {
+            WORD head[3] = { 0, 1, count };
+            memcpy(group, head, 6);
+            memcpy(group + 6, group_entries, sizeof(GroupIconEntry) * count);
+            written = UpdateResourceW(h, (LPCWSTR)RT_GROUP_ICON, MAKEINTRESOURCEW(1), MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+                                      group, (DWORD)(6 + sizeof(GroupIconEntry) * count));
+        }
+        if (h) written = EndUpdateResourceW(h, !written) && written;
+        if (written) {
+            SHChangeNotify(0x00002000L /* SHCNE_UPDATEITEM */, 0x0005 /* SHCNF_PATHW */, self, NULL);
+        } else {  /* put the program back as it was */
+            if (copied) DeleteFileW(self);
+            MoveFileExW(old, self, MOVEFILE_REPLACE_EXISTING);
+        }
+    }
+    free(data);
+}
+
+/* On the cover thread: the .ico, downloading the PNG first when there is none (tells the window when it is ready),
+ * then into this program's file for the next start (embed_icon). */
+static void fetch_icon(HWND hwnd) {
+    wchar_t png[MAX_PATH], ico[MAX_PATH], part[MAX_PATH];
+    icon_path(png, L"png");
+    icon_path(ico, L"ico");
+    if (!file_exists(ico)) {
+        if (!file_exists(png)) {
+            swprintf(part, MAX_PATH, L"%ls.part", png);
+            if (URLDownloadToFileW(NULL, ICON_URL, part, 0, NULL) != 0 || !MoveFileExW(part, png, MOVEFILE_REPLACE_EXISTING)) {
+                DeleteFileW(part);
+                return;
+            }
+        }
+        if (!make_icon()) return;
+        PostMessageW(hwnd, WM_ICON_READY, 0, 0);
+    }
+    embed_icon();
+}
+
+/* The hub's window takes covers\icon.ico (title bar, taskbar, Alt+Tab), when there is one. */
+static void set_window_icon(HWND hwnd) {
+    wchar_t ico[MAX_PATH];
+    icon_path(ico, L"ico");
+    HICON big = (HICON)LoadImageW(NULL, ico, IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_LOADFROMFILE);
+    HICON small = (HICON)LoadImageW(NULL, ico, IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_LOADFROMFILE);
+    if (big) SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)big);
+    if (small) SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small);
+}
+
 static DWORD WINAPI fetch_covers(LPVOID param) {
     HWND hwnd = (HWND)param;
     wchar_t dir[MAX_PATH];
     swprintf(dir, MAX_PATH, L"%ls\\covers", g_dir);
     CreateDirectoryW(dir, NULL);
+    fetch_icon(hwnd);
     for (int i = 0; i < g_count; i++) {
         Game* g = &g_games[i];
         if (g->cover || !g->cover_name[0]) continue;
@@ -522,6 +711,9 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hwnd, NULL, FALSE);
         }
         return 0;
+    case WM_ICON_READY:
+        set_window_icon(hwnd);
+        return 0;
     case WM_DESTROY: PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
@@ -569,6 +761,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show) {
                               (GetSystemMetrics(SM_CYSCREEN) - h) / 2,
                               w, h, NULL, NULL, inst, NULL);
     if (!hwnd) return 1;
+    set_window_icon(hwnd);  /* downloaded on the first start (fetch_icon) */
     ShowWindow(hwnd, show);
     HANDLE covers = CreateThread(NULL, 0, fetch_covers, hwnd, 0, NULL);
     if (covers) CloseHandle(covers);

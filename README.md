@@ -27,8 +27,10 @@ You need your own disc image of each game you want to play (`.chd`, or `.cue`
 with its `.bin`), in the version listed in the table above.
 
 1. Download the latest release zip and unzip it anywhere.
-2. Run `TwistedMetal1234Recomp.exe`. The cover art downloads in the
-   background the first time.
+2. Run `TwistedMetal1234Recomp.exe`. The cover art and the menu's icon
+   download in the background the first time (into `covers/`); the icon is
+   then written into your copy of `TwistedMetal1234Recomp.exe`, so Explorer
+   and shortcuts show it from the next start.
 3. Press **Play** on a game. The first time, its launcher opens: choose your
    disc image, then click Play.
 4. **Settings** opens the psxrecomp launcher at any time to update display, audio, controls,
@@ -47,7 +49,7 @@ OpenBIOS bundled with psxrecomp.
 
 Release zips contain the built programs, which include a machine-translated
 build of each game's own code, plus OpenBIOS. They contain no disc data, game
-assets, retail BIOS or cover art.
+assets, retail BIOS, cover art or icon artwork.
 
 ## Code hooks in this repository
 
@@ -84,6 +86,13 @@ applies these to their working trees.
   window size controls into dropdowns (window sizes go up to the desktop
   resolution) and adds the FPS Mode dropdown and the render thread, present
   thread and Smooth Motion checkboxes to the Display settings.
+
+## Credits
+
+- Box art in the menu: [libretro-thumbnails](https://github.com/libretro-thumbnails/libretro-thumbnails),
+  downloaded by the menu on its first start.
+- The menu's icon: [Twisted Metal icon by rafaelsguimaraes](https://www.steamgriddb.com/icon/11744)
+  on SteamGridDB, downloaded by the menu on its first start.
 
 ## License
 

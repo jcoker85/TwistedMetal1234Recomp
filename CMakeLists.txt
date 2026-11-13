@@ -79,13 +79,9 @@ if(NOT EXISTS "${CMAKE_BINARY_DIR}/shared-settings.toml")
 endif()
 
 if(WIN32)
-    # The window/taskbar icon is optional and not committed: put a square PNG at
-    # hub/icon/hub.png and run tools/make_icon.ps1 to produce hub/icon/hub.ico.
+    # No icon is built in: the hub downloads it on its first start (hub.c,
+    # fetch_icon); it is not ours to redistribute.
     set(_tm_hub_sources hub/hub.c)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/hub/icon/hub.ico")
-        enable_language(RC)
-        list(APPEND _tm_hub_sources hub/hub.rc)
-    endif()
     add_executable(TwistedMetal1234Recomp WIN32 ${_tm_hub_sources})
     target_compile_definitions(TwistedMetal1234Recomp PRIVATE UNICODE _UNICODE)
     target_link_options(TwistedMetal1234Recomp PRIVATE -municode -static)
